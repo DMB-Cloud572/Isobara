@@ -246,7 +246,7 @@ function dayDelta(f,i){
   const j=i===0?1:i-1,a=f.days[i]?.cons.tmax,b=f.days[j]?.cons.tmax;
   if(a==null||b==null)return null;
   const diff=i===0?b-a:a-b,abs=Math.round(Math.abs(diff));
-  const who=i===0?'Mañana':'Este día',ref=i<=1?'hoy':'el día anterior';
+  const who=i<=1?'Mañana':'Este día',ref=i<=1?'hoy':'el día anterior';
   return abs<2?`${who}, máxima parecida a la de ${ref}.`:`${who}, ${abs} °C ${diff>0?'más':'menos'} de máxima que ${ref}.`;
 }
 function evolution(d,history,today){
@@ -349,7 +349,7 @@ function advise(d,f,fromIdx,dayIndex=0){
   if(d.rel.temp.level!=='alta')why.push('la temperatura');
   if(d.rel.wind.level!=='alta')why.push('el viento');
   const whyT=why.length?` Hay discrepancia en ${why.length>1?why.slice(0,-1).join(', ')+' y '+why[why.length-1]:why[0]}.`:'';
-  const check=dayIndex===0?'Revísalo antes de salir.':'Revísalo la víspera.';
+  const check=dayIndex===0?'Revísalo antes de salir.':dayIndex===1?'Revísalo esta noche o antes de salir.':'Revísalo la víspera.';
   const tempOnly=d.rel.rain.level==='alta'&&d.rel.wind.level==='alta'&&d.rel.temp.level!=='alta'&&!d.lowN;
   const noPlan=d.rel.rain.level==='baja'||d.rel.wind.level==='baja'||d.lowN;
   let trust=d.overall==='alta'?'Me fiaría de este escenario.'
