@@ -76,6 +76,10 @@ header{display:grid;gap:10px}
 
 .opinion{display:grid;gap:12px;padding:18px}
 .opsum{margin:0;font:500 clamp(1.15rem,3vw,1.5rem)/1.25 var(--display);max-width:48ch;text-wrap:balance}
+.opnotes{display:grid;gap:4px;margin:0}
+.opnotes>div{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px}
+.opnotes dt{font-size:.82rem;font-weight:700;color:var(--muted);padding-top:2px}
+.opnotes dd{margin:0}
 .opgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,225px),1fr));gap:16px 22px}
 .opgrid>div{min-width:0}
 .opgrid h3{font-size:.95rem;margin-bottom:4px}
@@ -163,7 +167,7 @@ const MODELS=[
  {id:'gem_global',name:'GEM',org:'ECCC (Canadá)',res:'15 km',type:'Global',meta:'cmc_gem_gdps_15km',c:'--m7'},
  {id:'ecmwf_aifs025_single',name:'AIFS',org:'ECMWF',res:'25 km',type:'Global, IA',meta:'ecmwf_aifs025_single',c:'--m8'},
 ];
-const VARS=['temperature_2m','apparent_temperature','precipitation','precipitation_probability','wind_speed_10m','wind_gusts_10m','wind_direction_10m','cloud_cover','relative_humidity_2m','pressure_msl','snowfall','uv_index'];
+const VARS=['temperature_2m','apparent_temperature','precipitation','precipitation_probability','wind_speed_10m','wind_gusts_10m','wind_direction_10m','cloud_cover','relative_humidity_2m','pressure_msl','snowfall','uv_index','visibility'];
 const RAIN_MM=1;      // mm/día para contar «prevé lluvia»
 const MIN_HOURS=20;   // horas válidas para aceptar un día completo de un modelo
 const WET_MMH=.1;     // mm/h para contar que un modelo prevé lluvia en una hora
@@ -217,11 +221,50 @@ function buildForecast(results){
     if(n<3)overall='baja';
     const wet={};
     for(const i of idx){const v=nums(ok.map(m=>results[m.id].hourly.precipitation?.[i]));wet[i]=v.length>=2?{fr:v.filter(x=>x>=WET_MMH).length/v.length,y:v.filter(x=>x>=WET_MMH).length,n:v.length}:{fr:0,y:0,n:v.length}}
-    return{date,idx,rows,cons,rel,n,overall,lowN:n<3,wet,text:n?describe(cons,rel.rain):'Sin datos'};
+    const fog={};
+    for(const i of idx){const v=nums(ok.map(m=>results[m.id].hourly.visibility?.[i]));fog[i]={y:v.filter(x=>x<1000).length,n:v.length}}
+    return{date,idx,rows,cons,rel,n,overall,lowN:n<3,wet,fog,text:n?describe(cons,rel.rain):'Sin datos'};
   });
   return{time,hourly,days,ok:ok.map(m=>m.id)};
 }
 /* Opinión: reglas fijas sobre el consenso. No crea datos nuevos. */
+function bestWindow(d,f,use,len=3){
+  const hourOf=i=>+f.time[i].slice(11,13),day=use.filter(i=>hourOf(i)>=8&&hourOf(i)<=22);
+  let best=null;
+  for(let k=0;k+len<=day.length;k++){
+    const w=day.slice(k,k+len);
+    if(w[len-1]-w[0]!==len-1)continue;
+    const feel=w.map(i=>f.hourly.apparent_temperature[i]),gust=w.map(i=>f.hourly.wind_gusts_10m[i]);
+    if(feel.some(v=>v==null))continue;
+    const wet=Math.max(...w.map(i=>d.wet[i].fr)),G=Math.max(...nums(gust),0),F=feel.reduce((a,b)=>a+b,0)/len;
+    const score=wet*30+Math.abs(F-20)*.5+Math.max(0,G-30)*.2;
+    if(!best||score<best.score)best={score,from:hourOf(w[0]),to:hourOf(w[len-1])+1,wet,feel:F};
+  }
+  return best;
+}
+function dayDelta(f,i){
+  const j=i===0?1:i-1,a=f.days[i]?.cons.tmax,b=f.days[j]?.cons.tmax;
+  if(a==null||b==null)return null;
+  const diff=i===0?b-a:a-b,abs=Math.round(Math.abs(diff));
+  const who=i===0?'Mañana':'Este día',ref=i<=1?'hoy':'el día anterior';
+  return abs<2?`${who}, máxima parecida a la de ${ref}.`:`${who}, ${abs} °C ${diff>0?'más':'menos'} de máxima que ${ref}.`;
+}
+function evolution(d,history,today){
+  if(!history)return null;
+  const y=new Date(today+'T12:00:00Z');y.setUTCDate(y.getUTCDate()-1);
+  const snap=history[y.toISOString().slice(0,10)];if(!snap)return null;
+  const rows=Object.values(snap).map(m=>m[d.date]).filter(Boolean);
+  if(rows.length<3)return null;
+  const wasR=median(rows.map(r=>r.rain)),wasT=median(rows.map(r=>r.tmax)),nowR=d.cons.rain,nowT=d.cons.tmax;
+  const n=v=>String(Math.round(v*10)/10).replace('.',','),out=[];
+  if(wasR!=null&&nowR!=null){
+    if(wasR<1&&nowR>=1)out.push(`Ahora aparece lluvia: ayer se esperaban ${n(wasR)} mm y hoy ${n(nowR)} mm.`);
+    else if(wasR>=1&&nowR<1)out.push(`La lluvia se retira: ayer se esperaban ${n(wasR)} mm y hoy ${n(nowR)} mm.`);
+    else if(Math.abs(nowR-wasR)>=3&&Math.max(nowR,wasR)/Math.max(Math.min(nowR,wasR),.1)>=1.5)out.push(`La lluvia va ${nowR>wasR?'a más':'a menos'}: de ${n(wasR)} a ${n(nowR)} mm respecto a ayer.`);
+  }
+  if(wasT!=null&&nowT!=null&&Math.abs(nowT-wasT)>=2)out.push(`La máxima ${nowT>wasT?'sube':'baja'} ${Math.round(Math.abs(nowT-wasT))} °C respecto a lo previsto ayer.`);
+  return out.length?out.join(' '):'Se mantiene respecto a lo previsto ayer.';
+}
 function rainWindows(d,use,hourOf){
   const on=use.filter(i=>d.wet[i].fr>=.5),w=[];
   for(const i of on){const l=w[w.length-1];if(l&&i-l.end<=2)l.end=i;else w.push({start:i,end:i})}
@@ -291,6 +334,15 @@ function advise(d,f,fromIdx,dayIndex=0){
   if(hi!==null&&hi>=32)tr.push('Evita caminar o pedalear en las horas centrales y lleva agua.');
   if(!tr.length)tr.push('Sin condicionantes para coche o moto. Buenas condiciones para ir a pie o en bici.');
 
+  // Niebla: basta que dos modelos coincidan, y se presenta solo como posible
+  const fogH=use.filter(i=>d.fog?.[i]?.y>=2);
+  if(fogH.length){const fw=rainWindows({wet:Object.fromEntries(use.map(i=>[i,{fr:fogH.includes(i)?1:0}]))},use,hourOf),mx=fogH.reduce((b,i)=>d.fog[i].y>d.fog[b].y?i:b,fogH[0]);
+    tr.unshift(`Posible niebla ${winText(fw)}: la prevén ${d.fog[mx].y} de los ${d.fog[mx].n} modelos que dan visibilidad. Su localización es difícil de predecir.`)}
+
+  // Mejor franja
+  const bw=bestWindow(d,f,use);
+  const best=!bw?null:bw.wet>=.5?`Sin franja seca clara; lo menos malo, de ${bw.from} a ${bw.to} h.`:`De ${bw.from} a ${bw.to} h: ${bw.wet>=.25?'poca señal de lluvia':'sin lluvia'} y unos ${r0(bw.feel)} °C de sensación.`;
+
   // Confianza
   const why=[];
   if(d.rel.rain.level!=='alta')why.push('la lluvia');
@@ -310,9 +362,9 @@ function advise(d,f,fromIdx,dayIndex=0){
   const sky=snow?`Nieve ${winText(w)||''}`.trim():split?`Lluvia posible ${winText(w)}, sin acuerdo entre modelos`:w.length?`Lluvia ${winText(w)}`:weak?'Algún chubasco posible':'Sin lluvia';
   const gear=snow?'prepara ropa de abrigo y revisa la carretera':split?'lleva paraguas por si acaso':w.length?(gust!==null&&gust>=40?'sal con chubasquero':'sal con paraguas'):weak?'paraguas pequeño por si acaso':'no hace falta paraguas';
   const summary=split?`${sky}. Sensación de ${word||'temperatura sin datos'}; ${gear}.`:`${sky} y ${word||'temperatura sin datos'}; ${gear}.`;
-  return{summary,rain,feel,clothes,transport:tr.join(' '),trust,partial};
+  return{summary,rain,feel,clothes,transport:tr.join(' '),trust,partial,best,delta:dayDelta(f,dayIndex)};
 }
-if(typeof module!=='undefined')module.exports={MODELS,VARS,median,spread,circMean,relTemp,relRain,relWind,describe,buildForecast,worst,advise};
+if(typeof module!=='undefined')module.exports={MODELS,VARS,median,spread,circMean,relTemp,relRain,relWind,describe,buildForecast,worst,advise,bestWindow,dayDelta,evolution};
 </script>
 
 <script>
@@ -352,7 +404,7 @@ async function fetchRun(m){
 
 /* ---------- Estado ---------- */
 const DEFAULT={name:'Madrid',sub:'Comunidad de Madrid',lat:40.4168,lon:-3.7038};
-const S={repo:[],scores:null,bucket:'1',place:store.get('iso:place')||DEFAULT,favs:store.get('iso:favs')||[],day:0,variable:'temperature_2m',hidden:new Set(),fc:null,res:null,runs:{}};
+const S={history:{},repo:[],scores:null,bucket:'1',place:store.get('iso:place')||DEFAULT,favs:store.get('iso:favs')||[],day:0,variable:'temperature_2m',hidden:new Set(),fc:null,res:null,runs:{}};
 let reqId=0;
 
 const $=s=>document.querySelector(s);
@@ -375,8 +427,14 @@ const ICON={alta:'●',media:'◐',baja:'○'},LABEL={alta:'alta',media:'media',
 const conf=(l,txt)=>`<span class="conf ${l}"><i aria-hidden="true">${ICON[l]}</i>${txt||'Fiabilidad '+LABEL[l]}</span>`;
 
 /* ---------- Carga ---------- */
+async function loadHistory(){
+  const rec=S.repo.find(r=>r.lat===S.place.lat&&r.lon===S.place.lon);
+  if(!rec||S.history[rec.slug])return;
+  try{const r=await fetch(`data/predicciones/${rec.slug}.json`,{cache:'no-cache'});if(r.ok){S.history[rec.slug]=await r.json();if(S.fc&&$('#advice'))renderAdvice()}}catch{}
+}
 async function load(){
   const id=++reqId,p=S.place;
+  loadHistory();
   $('#app').innerHTML=`<p class="skeleton">Consultando ${MODELS.length} modelos para ${esc(p.name)}…</p>`;
   $('#notices').innerHTML='';
   renderFavs();
@@ -419,7 +477,7 @@ function render(){
         <li><strong>Viento:</strong> misma diferencia en la racha máxima. Alta hasta 15 km/h, media hasta 30 km/h, baja por encima.</li>
         <li><strong>Global:</strong> el peor de los tres. Con menos de tres modelos el día se marca como baja.</li>
         <li>Solo cuenta para un día el modelo con al menos 20 horas válidas. Los modelos de plazo corto dejan de contar al agotarse su horizonte, y por eso cambia el número de puntos.</li>
-        <li><strong>Opinión:</strong> la genera esta aplicación con reglas fijas sobre el consenso, sin inteligencia artificial en directo. Un tramo de lluvia aparece si al menos la mitad de los modelos prevé 0,1 mm/h o más. La ropa se basa en la sensación térmica más baja entre las 8 y las 22 h. Son recomendaciones orientativas y no sustituyen a los avisos oficiales.</li>
+        <li><strong>Opinión:</strong> la genera esta aplicación con reglas fijas sobre el consenso, sin inteligencia artificial en directo. Un tramo de lluvia aparece si al menos la mitad de los modelos prevé 0,1 mm/h o más. La ropa se basa en la sensación térmica más baja entre las 8 y las 22 h. La mejor franja busca 3 horas seguidas entre las 8 y las 22 h con menos señal de lluvia, sensación cercana a 20 °C y poco viento. La evolución compara con la foto de predicciones guardada ayer. La niebla aparece si dos o más modelos prevén menos de 1 km de visibilidad a la vez; solo 4 de los 8 modelos ofrecen este dato, y no todos señalan lo mismo. Son recomendaciones orientativas y no sustituyen a los avisos oficiales.</li>
         <li><strong>Límites:</strong> estos umbrales son un criterio propio, sin calibrar con observaciones. El acuerdo entre modelos no garantiza acierto. ARPEGE y AROME comparten origen, igual que IFS y AIFS, así que no son del todo independientes. Los valores los sirve Open-Meteo en el punto consultado, con su propio tratamiento de rejilla y altitud.</li>
         <li>El índice UV procede solo de GFS, único modelo de esta selección que lo ofrece. La probabilidad de precipitación la dan solo algunos modelos.</li>
       </ul></details></section>`;
@@ -476,10 +534,14 @@ function renderAdvice(){
   const f=S.fc,d=f.days[S.day],tz=S.res[f.ok[0]].tz||'Europe/Madrid';
   const a=advise(d,f,S.day===0?f.time.indexOf(nowIso(tz)):null,S.day);
   const b=(t,x)=>`<div><h3>${t}</h3><p>${esc(x)}</p></div>`;
+  const rec=S.repo.find(r=>r.lat===S.place.lat&&r.lon===S.place.lon);
+  const ev=evolution(d,rec?S.history[rec.slug]:null,f.days[0].date);
+  const note=(t,x)=>x?`<div><dt>${t}</dt><dd>${esc(x)}</dd></div>`:'';
   $('#advice').innerHTML=`<div class="sechead"><h2>Mi opinión: ${esc(dayName(d.date,S.day,true).toLowerCase())}</h2><span class="tag">Interpretación automática del consenso</span></div>
     <p class="opsum">${esc(a.summary)}</p>
+    <dl class="opnotes">${note('Mejor franja',a.best)}${note('Entre días',a.delta)}${note('Evolución',ev)}</dl>
     <div class="opgrid">${b('Lluvia',a.rain)}${b('Sensación térmica',a.feel)}${b('Ropa',a.clothes)}${b('Transporte',a.transport)}</div>
-    <p class="optrust">${conf(d.overall,'¿Me fío?')} ${esc(a.trust)}</p>`;
+    <p class="optrust">${conf(d.overall,'¿Me fío?')} ${esc(a.trust)}${S.day===0?` <a href="https://www.aemet.es/es/eltiempo/observacion/radar" target="_blank" rel="noopener">Ver radar de AEMET para las próximas horas</a>.`:''}</p>`;
 }
 function renderDay(){renderHero();renderAdvice();renderMatrix()}
 function renderMatrix(){
