@@ -289,7 +289,7 @@ function advise(d,f,fromIdx,dayIndex=0){
   if(gust!==null&&gust>=70)tr.push('Rachas fuertes: evita moto y bici, y ten cuidado con vehículos altos, parques y paseos marítimos.');
   else if(gust!==null&&gust>=50)tr.push('Rachas apreciables: cuidado en moto y bici, y con el viento lateral en coche.');
   if(hi!==null&&hi>=32)tr.push('Evita caminar o pedalear en las horas centrales y lleva agua.');
-  if(!tr.length)tr.push('Sin condicionantes para coche o moto. Buen día para ir a pie o en bici.');
+  if(!tr.length)tr.push('Sin condicionantes para coche o moto. Buenas condiciones para ir a pie o en bici.');
 
   // Confianza
   const why=[];
@@ -298,7 +298,12 @@ function advise(d,f,fromIdx,dayIndex=0){
   if(d.rel.wind.level!=='alta')why.push('el viento');
   const whyT=why.length?` Hay discrepancia en ${why.length>1?why.slice(0,-1).join(', ')+' y '+why[why.length-1]:why[0]}.`:'';
   const check=dayIndex===0?'Revísalo antes de salir.':'Revísalo la víspera.';
-  let trust=d.overall==='alta'?'Me fiaría de este escenario.':d.overall==='media'?`Escenario razonable, sin cerrarlo del todo.${whyT} ${check}`:`No cerraría planes al aire libre con esto: ten un plan B.${whyT} ${check}`;
+  const tempOnly=d.rel.rain.level==='alta'&&d.rel.wind.level==='alta'&&d.rel.temp.level!=='alta'&&!d.lowN;
+  const noPlan=d.rel.rain.level==='baja'||d.rel.wind.level==='baja'||d.lowN;
+  let trust=d.overall==='alta'?'Me fiaría de este escenario.'
+    :tempOnly?`Lluvia y viento están claros. Los modelos difieren hasta ${r0(d.rel.temp.spread)} °C, así que lleva una capa de más.`
+    :noPlan?`No cerraría planes al aire libre con esto: ten un plan B.${whyT} ${check}`
+    :`Escenario razonable, sin cerrarlo del todo.${whyT} ${check}`;
   if(dayIndex>=4)trust+=' A este plazo la predicción cambia con facilidad, aunque los modelos coincidan.';
 
   // Resumen

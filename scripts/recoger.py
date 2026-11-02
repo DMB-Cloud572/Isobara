@@ -229,9 +229,11 @@ def collect_obs(places, key):
                         continue
                 near.sort(key=lambda x: x[0])
                 for dist, s in near[:MAX_STATION_TRIES]:
+                    log(f"Probando {s.get('nombre')} ({s['indicativo']}), {dist:.1f} km, {s.get('altitud')} m")
                     try:
                         r = aemet_get(f"/observacion/convencional/datos/estacion/{s['indicativo']}", key)
-                    except Exception:
+                    except Exception as e:
+                        log(f"  descartada: {e}")
                         continue
                     if any(num(o.get("ta")) is not None for o in r):
                         rows = r
