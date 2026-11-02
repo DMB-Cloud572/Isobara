@@ -1,0 +1,35 @@
+name: Recoger datos
+on:
+  schedule:
+    - cron: "17 3,9,15,21 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [municipios.json, scripts/recoger.py]
+permissions:
+  contents: write
+concurrency:
+  group: recoger
+  cancel-in-progress: false
+jobs:
+  recoger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Recoger y puntuar
+        env:
+          AEMET_API_KEY: ${{ secrets.AEMET_API_KEY }}
+        run: python scripts/recoger.py
+      - name: Guardar datos
+        run: |
+          git config user.name "isobara-bot"
+          git config user.email "isobara-bot@users.noreply.github.com"
+          git add data
+          git diff --cached --quiet && exit 0
+          git commit -m "Datos $(date -u +%FT%H:%MZ)"
+          git pull --rebase origin main
+          git push
